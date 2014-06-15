@@ -1,59 +1,72 @@
-
+#include <stdio.h>
 #include <string.h>
 #include <fftw3.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <unistd.h>
 
-
-/*
- * TODO: move all of this stuff into a struct that we pass around to 'helper' functions
- */
-fftw_plan fftplanin;
-fftw_plan fftplanout;
-fftw_complex * fft_from_input;
-fftw_complex * fft_to_output;
-double * raw_from_input;
-double * raw_to_output;
+typedef struct fftw_holder {
+	fftw_plan fftplanin;
+	fftw_plan fftplanout;
+	fftw_complex * fft_from_input;
+	fftw_complex * fft_to_output;
+	double * raw_from_input;
+	double * raw_to_output;
+} catdata_t;
 
 /*
  * Prepare FFTW
  */
-void prepare_fftw(int inlen, int outlen) {
+catdata_t * prepare_fftw(int inlen, int outlen) {
 
-	raw_to_output = fftw_malloc(sizeof(double) * outlen);
-	raw_from_input = fftw_malloc(sizeof(double) * inlen);
+	catdata_t * mydata = NULL;
 
-	fft_from_input = (fftw_complex*)fftw_malloc(sizeof(fftw_complex) * inlen);
-	fft_to_output= (fftw_complex*)fftw_malloc(sizeof(fftw_complex) * outlen);
+	
+	printf("size: %llu \n", sizeof(catdata_t));
 
+	mydata = (catdata_t *) malloc(48);
+	printf("malloc done\n");
+	mydata->raw_to_output = fftw_malloc(sizeof(double) * outlen);
+	printf("malloc done\n");
+	mydata->raw_from_input = fftw_malloc(sizeof(double) * inlen);
 
-	fftplanin = fftw_plan_dft_r2c_1d(inlen, raw_from_input, fft_from_input, FFTW_MEASURE);
-	fftplanout = fftw_plan_dft_c2r_1d(outlen, fft_to_output, raw_to_output,  FFTW_MEASURE);
+	printf("malloc done\n");
+	mydata->fft_from_input = (fftw_complex*)fftw_malloc(sizeof(fftw_complex) * inlen);
+	printf("malloc done\n");
+	mydata->fft_to_output = (fftw_complex*)fftw_malloc(sizeof(fftw_complex) * outlen);
+
+	printf("plan in\n");
+
+	mydata->fftplanin = fftw_plan_dft_r2c_1d(inlen, mydata->raw_from_input, mydata->fft_from_input, FFTW_MEASURE);
+	printf("malloc done\n");
+	mydata->fftplanout = fftw_plan_dft_c2r_1d(outlen, mydata->fft_to_output, mydata->raw_to_output,  FFTW_MEASURE);
+
+	printf("malloc done\n");
+	return mydata;
 }
 
 /*
  * Convert inlen samples from input to outlen samples to output, scaling frequences
  * as needed.
  */
-void do_fftw(int * input, int * output, int inlen, int outlen) {
+void do_fftw(catdata_t * mydata, int * input, int * output, int inlen, int outlen) {
 
 	int i;
 	double factor = (double)(outlen)/(double)(inlen);
 
 	// STEP 1: FFTW operates on doubles, so convert to a double.
 	for(i=0; i < inlen; i++) {
-		raw_from_input[i] = (double) input[i];
+		mydata->raw_from_input[i] = (double) input[i];
 	}
 
 	// STEP 2: Compute the forward FFT
-	fftw_execute(fftplanin);
+	fftw_execute(mydata->fftplanin);
 
 
 	// STEP 3: Clear the output space.
 	for(i = 0; i < outlen; i++) {
-		fft_to_output[i][0] = 0;
-		fft_to_output[i][1] = 0;
+		mydata->fft_to_output[i][0] = 0;
+		mydata->fft_to_output[i][1] = 0;
 	}
 
 	// STEP 4: scale frequencies. 
@@ -61,19 +74,19 @@ void do_fftw(int * input, int * output, int inlen, int outlen) {
 		int offset;
 		offset = (int) (i * factor);
 		assert(offset < outlen);
-		fft_to_output[offset][0] += fft_from_input[i][0];
-		fft_to_output[offset][1] += fft_from_input[i][1];
+		mydata->fft_to_output[offset][0] += mydata->fft_from_input[i][0];
+		mydata->fft_to_output[offset][1] += mydata->fft_from_input[i][1];
 	}
 
 	// STEP 5: inverse FFT
-	fftw_execute(fftplanout);
+	fftw_execute(mydata->fftplanout);
 
 	// STEP 6: normalize output/
 	for(i = 0; i < outlen; i++) {
 		double c;
 
 		// FIXME: not quite the right normalization constant here...
-		c = raw_to_output[i]/inlen;
+		c = mydata->raw_to_output[i]/inlen;
 
 		// Prevent overflow.
 		if (c > 0x7fffffff) {
@@ -96,7 +109,10 @@ int main(int argc, char ** argv) {
 	int inarray[il];
 	int oarray[ol];
 	int rv;
-	prepare_fftw(il, ol);
+
+	catdata_t * mydata = NULL;
+
+	mydata  = prepare_fftw(IN_NFFT, OUT_NFFT);
 
 	/* FIXME: This is a horrible way to get data! */
 	while (1) {
@@ -122,7 +138,7 @@ int main(int argc, char ** argv) {
 		}
 
 		// Convert the data.
-		do_fftw(inarray, oarray, il, ol);
+		do_fftw(mydata, inarray, oarray, il, ol);
 
 		// Output the data. Since we use a 1:4 ratio, we need to output
 		// four samples for every sample we recieve since teh input and output
