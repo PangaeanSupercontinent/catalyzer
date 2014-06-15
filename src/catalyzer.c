@@ -5,6 +5,10 @@
 #include <assert.h>
 #include <unistd.h>
 
+#define MAX_INT 0x7fffffff
+#define OUT_NFFT 768
+#define IN_NFFT 3072
+
 typedef struct fftw_holder {
 	fftw_plan fftplanin;
 	fftw_plan fftplanout;
@@ -21,27 +25,16 @@ catdata_t * prepare_fftw(int inlen, int outlen) {
 
 	catdata_t * mydata = NULL;
 
-	
-	printf("size: %llu \n", sizeof(catdata_t));
-
 	mydata = (catdata_t *) malloc(48);
-	printf("malloc done\n");
 	mydata->raw_to_output = fftw_malloc(sizeof(double) * outlen);
-	printf("malloc done\n");
 	mydata->raw_from_input = fftw_malloc(sizeof(double) * inlen);
 
-	printf("malloc done\n");
 	mydata->fft_from_input = (fftw_complex*)fftw_malloc(sizeof(fftw_complex) * inlen);
-	printf("malloc done\n");
 	mydata->fft_to_output = (fftw_complex*)fftw_malloc(sizeof(fftw_complex) * outlen);
 
-	printf("plan in\n");
-
 	mydata->fftplanin = fftw_plan_dft_r2c_1d(inlen, mydata->raw_from_input, mydata->fft_from_input, FFTW_MEASURE);
-	printf("malloc done\n");
 	mydata->fftplanout = fftw_plan_dft_c2r_1d(outlen, mydata->fft_to_output, mydata->raw_to_output,  FFTW_MEASURE);
 
-	printf("malloc done\n");
 	return mydata;
 }
 
@@ -89,10 +82,10 @@ void do_fftw(catdata_t * mydata, int * input, int * output, int inlen, int outle
 		c = mydata->raw_to_output[i]/inlen;
 
 		// Prevent overflow.
-		if (c > 0x7fffffff) {
-			output[i] = 0x7fffffff;
-		} else if (c < -0x7fffffff) {
-			output[i] = -0x7fffffff;
+		if (c > MAX_INT) {
+			output[i] = MAX_INT;
+		} else if (c < -MAX_INT) {
+			output[i] = -MAX_INT;
 		} else {
 			output[i] = c;
 		}
@@ -101,14 +94,11 @@ void do_fftw(catdata_t * mydata, int * input, int * output, int inlen, int outle
 
 int main(int argc, char ** argv) {
 
-	int il = 3072;
-	int ol = 768;
-	int atoncei = 1024;
-	int atonceo=256;
-	int i;
-	int inarray[il];
-	int oarray[ol];
-	int rv;
+	int atoncei = 1024; /* at once in */
+	int atonceo = 256; /* at once out */
+	int i, rv;
+	int inarray[IN_NFFT];
+	int oarray[OUT_NFFT];
 
 	catdata_t * mydata = NULL;
 
@@ -124,10 +114,10 @@ int main(int argc, char ** argv) {
 		 */
 
 		// Slide data we have over.
-		memmove(inarray, inarray+atoncei, sizeof(int)*(il-atoncei));
+		memmove(inarray, inarray+atoncei, sizeof(int)*(IN_NFFT-atoncei));
 
 		// Read more data from STDIN
-		for (i = il-atoncei; i < il; i++) {
+		for (i = IN_NFFT - atoncei; i < IN_NFFT; i++) {
 			do {
 				// Right Right and Left... Throwaway Right
 				rv = read(0, inarray + i, 4);
@@ -138,7 +128,7 @@ int main(int argc, char ** argv) {
 		}
 
 		// Convert the data.
-		do_fftw(mydata, inarray, oarray, il, ol);
+		do_fftw(mydata, inarray, oarray, IN_NFFT, OUT_NFFT);
 
 		// Output the data. Since we use a 1:4 ratio, we need to output
 		// four samples for every sample we recieve since teh input and output
