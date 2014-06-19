@@ -1,8 +1,9 @@
-#include <stdio.h>
-#include <string.h>
-#include <fftw3.h>
-#include <stdlib.h>
 #include <assert.h>
+#include <fftw3.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #define MAX_INT 0x7fffffff
@@ -99,6 +100,7 @@ int main(int argc, char ** argv) {
 	int i, rv;
 	int inarray[IN_NFFT];
 	int oarray[OUT_NFFT];
+	double scale;
 
 	catdata_t * mydata = NULL;
 
@@ -114,7 +116,7 @@ int main(int argc, char ** argv) {
 		 */
 
 		// Slide data we have over.
-		memmove(inarray, inarray+atoncei, sizeof(int)*(IN_NFFT-atoncei));
+		memmove(inarray, inarray + atoncei, sizeof(int) * (IN_NFFT - atoncei));
 
 		// Read more data from STDIN
 		for (i = IN_NFFT - atoncei; i < IN_NFFT; i++) {
@@ -127,13 +129,19 @@ int main(int argc, char ** argv) {
 			//printf("%i\n", inarray[i]);
 		}
 
+		// Hann window
+		for (i = IN_NFFT; i < IN_NFFT; i++) {
+			scale = 0.5 * (1 - cos((2 * M_PI * i)/(IN_NFFT - 1)));
+			inarray[i] = inarray[i] * scale;
+		}
+
 		// Convert the data.
 		do_fftw(mydata, inarray, oarray, IN_NFFT, OUT_NFFT);
 
 		// Output the data. Since we use a 1:4 ratio, we need to output
 		// four samples for every sample we recieve since teh input and output
 		// clocks have the same frequency. 
-		for(i = atonceo; i < (2*atonceo); i++) {
+		for(i = atonceo; i < (2 * atonceo); i++) {
 			write(1, oarray + i, 4);
 			write(1, oarray + i, 4);
 			write(1, oarray + i, 4);
