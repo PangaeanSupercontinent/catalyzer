@@ -8,6 +8,7 @@
 
 #define MAX_INT 0x7fffffff
 
+#define FFT_OPTION_HANN 1
 typedef struct {
 	/* What file descriptor to use */
 	int cio_fd;
@@ -96,7 +97,7 @@ catalyzer_fftw_state * prepare_fftw(int inlen, int outlen) {
  * Convert inlen samples from input to outlen samples to output, scaling frequences
  * as needed.
  */
-void do_fftw(catalyzer_fftw_state * mydata, int * input, int * output, int inlen, int outlen) {
+void do_fftw(catalyzer_fftw_state * mydata, int * input, int * output, int inlen, int outlen, int options) {
 
 	int i;
 	double factor = (double)(outlen)/(double)(inlen);
@@ -106,11 +107,13 @@ void do_fftw(catalyzer_fftw_state * mydata, int * input, int * output, int inlen
 		mydata->raw_from_input[i] = (double) input[i];
 	}
 
-	// Hann window
-	for (i = 0; i < inlen; i++) {
-		double scale;
-		scale = 0.5 * (1 - cos((2 * M_PI * i)/(inlen - 1)));
-		mydata->raw_from_input[i] *= scale;
+	if (options & FFT_OPTION_HANN) {
+		// Hann window
+		for (i = 0; i < inlen; i++) {
+			double scale;
+			scale = 0.5 * (1 - cos((2 * M_PI * i)/(inlen - 1)));
+			mydata->raw_from_input[i] *= scale;
+		}
 	}
 
 
@@ -195,7 +198,7 @@ int main_loop(catalyzer_io * input,
 		readwrite(input, input_buffer + input_overlap, sample_size, 0);
 		
 		/* Do the converting */
-		do_fftw(fftw_state, input_buffer, output_buffer, input_buffer_size, output_buffer_size);
+		do_fftw(fftw_state, input_buffer, output_buffer, input_buffer_size, output_buffer_size, FFT_OPTION_HANN);
 
 		/* Write output data */
 		readwrite(output, output_buffer + overlap, sample_size / downsample_factor, 1);
@@ -217,6 +220,6 @@ int main(int argc, char ** argv) {
 	output.cio_stop_on_eof=1;
 
 
-	main_loop(&input, &output, downsample, 1024, 8);
+	main_loop(&input, &output, downsample, 1024, 0);
 }
 
