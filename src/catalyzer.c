@@ -7,12 +7,21 @@
 #include <unistd.h>
 
 #define MAX_INT 0x7fffffff
-#define OUT_NFFT 768
-#define IN_NFFT 3072
 
 typedef struct {
+	/* What file descriptor to use */
 	int cio_fd;
+
+	/* How many times does each (ints) worth of data
+	 * have to be repeated.
+	 */
 	int cio_duplication;
+
+	/* Should we give up if you run into a problem with IO?
+	 * This should be false when working with files but true
+	 * when working with audio devices because data might not
+	 * be ready yet.
+	 */
 	int cio_stop_on_eof;
 } catalyzer_io;
 
@@ -28,6 +37,13 @@ typedef struct fftw_holder {
 
 
 
+/*
+ * readwrite: This manages low-level read and write stuff. 
+ * cio is a catalyzer_io structure that specfies how to read or write. 
+ * data is a pointer to an integer array where the data will go
+ * len is thenumber of ints to copy
+ * shouldwrite is 1 if you are writing data and 0 if you are reading data
+ * */
 int readwrite(catalyzer_io * cio, int * data, int len, int shouldwrite) {
 
 	int i,j;
@@ -37,6 +53,7 @@ int readwrite(catalyzer_io * cio, int * data, int len, int shouldwrite) {
 		dptr = data + i;
 		for (j = 0; j < cio->cio_duplication; j++) {
 			int rv;
+			/* Keep trying until we read/write the data we want */
 			do {
 				if (shouldwrite) {
 					rv = write(cio->cio_fd, dptr, 4);
@@ -89,6 +106,14 @@ void do_fftw(catalyzer_fftw_state * mydata, int * input, int * output, int inlen
 		mydata->raw_from_input[i] = (double) input[i];
 	}
 
+	// Hann window
+	for (i = 0; i < inlen; i++) {
+		double scale;
+		scale = 0.5 * (1 - cos((2 * M_PI * i)/(inlen - 1)));
+		mydata->raw_from_input[i] *= scale;
+	}
+
+
 	// STEP 2: Compute the forward FFT
 	fftw_execute(mydata->fftplanin);
 
@@ -129,55 +154,69 @@ void do_fftw(catalyzer_fftw_state * mydata, int * input, int * output, int inlen
 	}
 }
 
+/*
+ * Main loop continuously reads/writes from input/output, downsampleing as we go.
+ * input: data inputinformation
+ * output: data output information
+ * downsample_factor how much to downsample by (usually 4)
+ * overlap: how many samples to overlap between subsequent samples
+ */
+int main_loop(catalyzer_io * input, 
+		catalyzer_io * output, 
+		int downsample_factor,
+		int sample_size,
+		int overlap) {
+
+	if (sample_size % downsample_factor) {
+		fprintf(stderr,"downsample factor does not evenly divide sample size.\n");
+		return -1;
+	}
+
+	int input_overlap = overlap * downsample_factor * 2;
+	int output_overlap = overlap * 2;
+	int input_buffer_size = sample_size + input_overlap;
+	int output_buffer_size = sample_size / downsample_factor  + output_overlap;
+	int * input_buffer = calloc(input_buffer_size, sizeof(int));
+	int * output_buffer = calloc(output_buffer_size, sizeof(int));
+
+	catalyzer_fftw_state * fftw_state = prepare_fftw(input_buffer_size, output_buffer_size);
+
+	int ok = 1;
+
+	while (ok) {
+		/* Copy some data from the tail of the input buffer to the begining, 
+		 * as per overlap requirements 
+		 */
+		memmove(input_buffer, 
+			input_buffer+ (input_buffer_size - input_overlap) * sizeof(int),
+			input_overlap * sizeof(int));
+
+		/* Read input data */
+		readwrite(input, input_buffer + input_overlap, sample_size, 0);
+		
+		/* Do the converting */
+		do_fftw(fftw_state, input_buffer, output_buffer, input_buffer_size, output_buffer_size);
+
+		/* Write output data */
+		readwrite(output, output_buffer + overlap, sample_size / downsample_factor, 1);
+	}
+}
+
 
 int main(int argc, char ** argv) {
 
-	int atoncei = 1024; /* at once in */
-	int atonceo = 256; /* at once out */
-	int i, rv;
-	int inarray[IN_NFFT];
-	int oarray[OUT_NFFT];
-	double scale;
 	catalyzer_io input, output;
+	int downsample = 4;
 
 	input.cio_fd=0;
 	input.cio_duplication=1;
 	input.cio_stop_on_eof=1;
 
 	output.cio_fd=1;
-	output.cio_duplication=4;
+	output.cio_duplication=input.cio_duplication * downsample;
 	output.cio_stop_on_eof=1;
 
 
-	catalyzer_fftw_state * mydata = NULL;
-
-	mydata  = prepare_fftw(IN_NFFT, OUT_NFFT);
-
-	/* FIXME: This is a horrible way to get data! */
-	while (1) {
-		/* IDEA: To prevent noise from sharp transations, let each "chunk" of 
- 		 * data to convert overlap a bit with the previous chunk. We'll split into
-		 * 3 parts and do the FFT over the whole thing but only extract data from
-		 * the center. 
-		 * hmmmmm. In practise this doesn't seem to work so well.
-		 */
-
-		// Slide data we have over.
-		memmove(inarray, inarray + atoncei, sizeof(int) * (IN_NFFT - atoncei));
-
-		readwrite(&input, inarray+IN_NFFT-atoncei, atoncei, 0);
-
-		// Hann window
-		for (i = IN_NFFT; i < IN_NFFT; i++) {
-			scale = 0.5 * (1 - cos((2 * M_PI * i)/(IN_NFFT - 1)));
-			inarray[i] = inarray[i] * scale;
-		}
-
-		// Convert the data.
-		do_fftw(mydata, inarray, oarray, IN_NFFT, OUT_NFFT);
-
-		readwrite(&output, oarray+atonceo, atonceo, 1);
-		fprintf(stderr, "check\b");
-	}
+	main_loop(&input, &output, downsample, 1024, 8);
 }
 
