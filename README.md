@@ -27,3 +27,4 @@ cmd:  arecord --device=hw:CARD=X20,DEV=0 -t raw -f S32_LE -c 2 -r 192000 | ./cat
 To build:
 	1) install fftw3 (in debian/ubuntu: apt-get install libfftw3-dev
 	2) cd src; make
+        3) be happy
