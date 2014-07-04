@@ -10,6 +10,12 @@
 #define OUT_NFFT 768
 #define IN_NFFT 3072
 
+typedef struct {
+	int cio_fd;
+	int cio_duplication;
+	int cio_stop_on_eof;
+} catalyzer_io;
+
 typedef struct fftw_holder {
 	fftw_plan fftplanin;
 	fftw_plan fftplanout;
@@ -17,16 +23,46 @@ typedef struct fftw_holder {
 	fftw_complex * fft_to_output;
 	double * raw_from_input;
 	double * raw_to_output;
-} catdata_t;
+} catalyzer_fftw_state;
+
+
+
+
+int readwrite(catalyzer_io * cio, int * data, int len, int shouldwrite) {
+
+	int i,j;
+
+	for (i = 0; i < len; i++) {
+		int * dptr;
+		dptr = data + i;
+		for (j = 0; j < cio->cio_duplication; j++) {
+			int rv;
+			do {
+				if (shouldwrite) {
+					rv = write(cio->cio_fd, dptr, 4);
+				} else {
+					rv = read(cio->cio_fd, dptr, 4);
+				}
+			} while (rv == 0 && !cio->cio_stop_on_eof);
+
+			if (rv < 1 && cio->cio_stop_on_eof) {
+				fprintf(stderr, "Giving up on fd %i", cio->cio_fd);
+				return 1;
+			}
+
+		}
+	}
+	return 0;
+}
 
 /*
  * Prepare FFTW
  */
-catdata_t * prepare_fftw(int inlen, int outlen) {
+catalyzer_fftw_state * prepare_fftw(int inlen, int outlen) {
 
-	catdata_t * mydata = NULL;
+	catalyzer_fftw_state * mydata = NULL;
 
-	mydata = (catdata_t *) malloc(48);
+	mydata = (catalyzer_fftw_state *) malloc(sizeof(catalyzer_fftw_state));
 	mydata->raw_to_output = fftw_malloc(sizeof(double) * outlen);
 	mydata->raw_from_input = fftw_malloc(sizeof(double) * inlen);
 
@@ -43,7 +79,7 @@ catdata_t * prepare_fftw(int inlen, int outlen) {
  * Convert inlen samples from input to outlen samples to output, scaling frequences
  * as needed.
  */
-void do_fftw(catdata_t * mydata, int * input, int * output, int inlen, int outlen) {
+void do_fftw(catalyzer_fftw_state * mydata, int * input, int * output, int inlen, int outlen) {
 
 	int i;
 	double factor = (double)(outlen)/(double)(inlen);
@@ -93,6 +129,7 @@ void do_fftw(catdata_t * mydata, int * input, int * output, int inlen, int outle
 	}
 }
 
+
 int main(int argc, char ** argv) {
 
 	int atoncei = 1024; /* at once in */
@@ -101,8 +138,18 @@ int main(int argc, char ** argv) {
 	int inarray[IN_NFFT];
 	int oarray[OUT_NFFT];
 	double scale;
+	catalyzer_io input, output;
 
-	catdata_t * mydata = NULL;
+	input.cio_fd=0;
+	input.cio_duplication=1;
+	input.cio_stop_on_eof=1;
+
+	output.cio_fd=1;
+	output.cio_duplication=4;
+	output.cio_stop_on_eof=1;
+
+
+	catalyzer_fftw_state * mydata = NULL;
 
 	mydata  = prepare_fftw(IN_NFFT, OUT_NFFT);
 
@@ -118,16 +165,7 @@ int main(int argc, char ** argv) {
 		// Slide data we have over.
 		memmove(inarray, inarray + atoncei, sizeof(int) * (IN_NFFT - atoncei));
 
-		// Read more data from STDIN
-		for (i = IN_NFFT - atoncei; i < IN_NFFT; i++) {
-			do {
-				// Right Right and Left... Throwaway Right
-				rv = read(0, inarray + i, 4);
-				rv = read(0, inarray + i, 4);
-			} while (rv == 0);
-			
-			//printf("%i\n", inarray[i]);
-		}
+		readwrite(&input, inarray+IN_NFFT-atoncei, atoncei, 0);
 
 		// Hann window
 		for (i = IN_NFFT; i < IN_NFFT; i++) {
@@ -138,20 +176,8 @@ int main(int argc, char ** argv) {
 		// Convert the data.
 		do_fftw(mydata, inarray, oarray, IN_NFFT, OUT_NFFT);
 
-		// Output the data. Since we use a 1:4 ratio, we need to output
-		// four samples for every sample we recieve since teh input and output
-		// clocks have the same frequency. 
-		for(i = atonceo; i < (2 * atonceo); i++) {
-			write(1, oarray + i, 4);
-			write(1, oarray + i, 4);
-			write(1, oarray + i, 4);
-			write(1, oarray + i, 4);
-			write(1, oarray + i, 4);
-			write(1, oarray + i, 4);
-			write(1, oarray + i, 4);
-			write(1, oarray + i, 4);
-		//	printf("%i\n", oarray[i]);
-		}
+		readwrite(&output, oarray+atonceo, atonceo, 1);
+		fprintf(stderr, "check\b");
 	}
 }
 
