@@ -93,6 +93,7 @@ catalyzer_fftw_state * prepare_fftw(int inlen, int outlen) {
 	return mydata;
 }
 
+
 /*
  * Convert inlen samples from input to outlen samples to output, scaling frequences
  * as needed.
@@ -135,6 +136,7 @@ void do_fftw(catalyzer_fftw_state * mydata, int * input, int * output, int inlen
 		mydata->fft_to_output[offset][0] += mydata->fft_from_input[i][0];
 		mydata->fft_to_output[offset][1] += mydata->fft_from_input[i][1];
 	}
+
 
 	// STEP 5: inverse FFT
 	fftw_execute(mydata->fftplanout);
@@ -198,7 +200,7 @@ int main_loop(catalyzer_io * input,
 		readwrite(input, input_buffer + input_overlap, sample_size, 0);
 		
 		/* Do the converting */
-		do_fftw(fftw_state, input_buffer, output_buffer, input_buffer_size, output_buffer_size, FFT_OPTION_HANN);
+		do_fftw(fftw_state, input_buffer, output_buffer, input_buffer_size, output_buffer_size,0 );
 
 		/* Write output data */
 		readwrite(output, output_buffer + overlap, sample_size / downsample_factor, 1);
@@ -212,7 +214,7 @@ int main(int argc, char ** argv) {
 	int downsample = 4;
 
 	input.cio_fd=0;
-	input.cio_duplication=1;
+	input.cio_duplication=2;
 	input.cio_stop_on_eof=1;
 
 	output.cio_fd=1;
@@ -220,6 +222,6 @@ int main(int argc, char ** argv) {
 	output.cio_stop_on_eof=1;
 
 
-	main_loop(&input, &output, downsample, 1024, 0);
+	main_loop(&input, &output, downsample, 8192, 0);
 }
 
