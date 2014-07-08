@@ -18,12 +18,7 @@ typedef struct {
 	 */
 	int cio_duplication;
 
-	/* Should we give up if you run into a problem with IO?
-	 * This should be false when working with files but true
-	 * when working with audio devices because data might not
-	 * be ready yet.
-	 */
-	int cio_stop_on_eof;
+	int * cio_buf_head;
 } catalyzer_io;
 
 typedef struct fftw_holder {
@@ -35,41 +30,52 @@ typedef struct fftw_holder {
 	double * raw_to_output;
 } catalyzer_fftw_state;
 
+/*
+ * cat_read: This manages low-level read and write stuff.
+ * cio is a catalyzer_io
+ * data is a pointer to an integer array where the data will go
+ * len is number of samples to capture
+ */
+int cat_read(catalyzer_io * cio, int * data, int len) {
 
+	int i;
+	int bytes_req = len * cio->cio_duplication * sizeof(int);
+	int offset = 0;
+	int rv;
 
+	do {
+		rv = read(cio->cio_fd, (char*)cio->cio_buf_head + offset, bytes_req);
+		bytes_req = bytes_req - rv;
+		offset = offset + rv;
+	} while (rv != 0 && bytes_req > 0);
+
+	/* discard one channel of data */
+	for (i = 0; i < len; i++) {
+		data[i] = cio->cio_buf_head[i * cio->cio_duplication + cio->cio_duplication - 1];
+	}
+
+	return 0;
+}
 
 /*
- * readwrite: This manages low-level read and write stuff. 
- * cio is a catalyzer_io structure that specfies how to read or write. 
- * data is a pointer to an integer array where the data will go
- * len is thenumber of ints to copy
- * shouldwrite is 1 if you are writing data and 0 if you are reading data
- * */
-int readwrite(catalyzer_io * cio, int * data, int len, int shouldwrite) {
+ * cat_write writes output to file descriptor cio->cio_fd
+ * cio is a catalyzer_io
+ * data is a pointer to an integer array of the source data
+ * data_len is the number of ints in data
+ */
+int cat_write(catalyzer_io * cio, int * data, int data_len) {
 
-	int i,j;
+	int i, j;
 
-	for (i = 0; i < len; i++) {
-		int * dptr;
-		dptr = data + i;
+	for (i = 0; i < data_len; i++) {
 		for (j = 0; j < cio->cio_duplication; j++) {
-			int rv;
-			/* Keep trying until we read/write the data we want */
-			do {
-				if (shouldwrite) {
-					rv = write(cio->cio_fd, dptr, 4);
-				} else {
-					rv = read(cio->cio_fd, dptr, 4);
-				}
-			} while (rv == 0 && !cio->cio_stop_on_eof);
-
-			if (rv < 1 && cio->cio_stop_on_eof) {
-				fprintf(stderr, "Giving up on fd %i", cio->cio_fd);
-				return 1;
-			}
-
+			/* Make written data match sample rate of read data */
+			cio->cio_buf_head[i * cio->cio_duplication + j] = data[i];
 		}
 	}
+
+	write(cio->cio_fd, cio->cio_buf_head, cio->cio_duplication * data_len * sizeof(int));
+
 	return 0;
 }
 
@@ -197,14 +203,16 @@ int main_loop(catalyzer_io * input,
 			input_overlap * sizeof(int));
 
 		/* Read input data */
-		readwrite(input, input_buffer + input_overlap, sample_size, 0);
-		
+		cat_read(input, input_buffer + input_overlap, sample_size);
+
 		/* Do the converting */
-		do_fftw(fftw_state, input_buffer, output_buffer, input_buffer_size, output_buffer_size,0 );
+		do_fftw(fftw_state, input_buffer, output_buffer, input_buffer_size, output_buffer_size, 0);
 
 		/* Write output data */
-		readwrite(output, output_buffer + overlap, sample_size / downsample_factor, 1);
+		cat_write(output, output_buffer + overlap, sample_size / downsample_factor);
 	}
+
+	return 0;
 }
 
 
@@ -213,15 +221,17 @@ int main(int argc, char ** argv) {
 	catalyzer_io input, output;
 	int downsample = 4;
 
-	input.cio_fd=0;
-	input.cio_duplication=2;
-	input.cio_stop_on_eof=1;
+	input.cio_fd = 0;
+	input.cio_duplication = 2;
 
-	output.cio_fd=1;
-	output.cio_duplication=input.cio_duplication * downsample;
-	output.cio_stop_on_eof=1;
+	output.cio_fd = 1;
+	output.cio_duplication = input.cio_duplication * downsample;
 
+	input.cio_buf_head = malloc(sizeof(int) * 8192 * input.cio_duplication);
+	output.cio_buf_head = malloc(sizeof(int) * 8192 * input.cio_duplication);
 
 	main_loop(&input, &output, downsample, 8192, 0);
+
+	return 0;
 }
 
