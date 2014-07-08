@@ -1,2 +1,2 @@
 catalyzer: catalyzer.c
-	cc catalyzer.c -lm -lfftw3 -o catalyze -Wall -pg
+	cc catalyzer.c -lm -lfftw3 -o catalyze -Wall

@@ -47,54 +47,46 @@ typedef struct fftw_holder {
  * len is thenumber of ints to copy
  * shouldwrite is 1 if you are writing data and 0 if you are reading data
  * */
-int readwrite(catalyzer_io * cio, int * data, int len, int shouldwrite) {
+int cat_read(catalyzer_io * cio, int * data, int len) {
 
-	int i,j;
+	int i;
 	int bytes_req = len * cio->cio_duplication * sizeof(int);
 	int offset = 0;
 	int rv;
 	
-	if (!shouldwrite) {
-		do {
-			//rv = read(cio->cio_fd, (char*)cio->cio_buf_head + offset, bytes_req);
-			rv = read(cio->cio_fd, (char*)cio->cio_buf_head + offset, bytes_req);
-			fprintf(stderr, "bytes read %i \n", rv);
-			bytes_req = bytes_req - rv;
-			offset = offset + rv;
-			fprintf(stderr, "bytes req: %i. offset %i \n", bytes_req, offset);
-		} while (rv != 0 && bytes_req > 0);
+	do {
+		rv = read(cio->cio_fd, (char*)cio->cio_buf_head + offset, bytes_req);
+		//fprintf(stderr, "bytes read %i \n", rv);
+		bytes_req = bytes_req - rv;
+		offset = offset + rv;
+	//	fprintf(stderr, "bytes req: %i. offset %i \n", bytes_req, offset);
+	} while (rv != 0 && bytes_req > 0);
 
-		
-		// discard one channel of data	
-		for (i = 0; i < len; i++) {
-			data[i] = cio->cio_buf_head[i * cio->cio_duplication + cio->cio_duplication - 1];
-			fprintf(stderr, "data %i : %i \n", i, data[i]);
-		}
-
-		return 0;
-	}
-
+	
+	// discard one channel of data	
 	for (i = 0; i < len; i++) {
-		int * dptr;
-		dptr = data + i;
+		data[i] = cio->cio_buf_head[i * cio->cio_duplication + cio->cio_duplication - 1];
+	//	fprintf(stderr, "data %i : %i \n", i, data[i]);
+	}
+
+//		fprintf(stderr, "data %i : %i \n", i, data[i]);
+	return 0;
+}
+
+int cat_write(catalyzer_io * cio, int * data, int len) {
+
+	int i;
+	int j;
+	for (i = 0; i < len; i++) {
 		for (j = 0; j < cio->cio_duplication; j++) {
-			int rv;
-			/* Keep trying until we read/write the data we want */
-			do {
-				if (shouldwrite) {
-					rv = write(cio->cio_fd, dptr, 4);
-				} else {
-					exit(-1);
-				}
-			} while (rv == 0 && !cio->cio_stop_on_eof);
-
-			if (rv < 1 && cio->cio_stop_on_eof) {
-				fprintf(stderr, "Giving up on fd %i", cio->cio_fd);
-				return 1;
-			}
-
+			cio->cio_buf_head[i * cio->cio_duplication + j] = data[i];
+//			fprintf(stderr, "data out %i : %i \n", i+j, cio->cio_buf_head[i+j]);
 		}
 	}
+
+	write(cio->cio_fd, cio->cio_buf_head, cio->cio_duplication * len * sizeof(int));
+	//fprintf(stderr, "rv write %i: \n", rv);
+
 	return 0;
 }
 
@@ -223,13 +215,13 @@ int main_loop(catalyzer_io * input,
 			input_overlap * sizeof(int));
 
 		/* Read input data */
-		readwrite(input, input_buffer + input_overlap, sample_size, 0);
+		cat_read(input, input_buffer + input_overlap, sample_size);
 		
 		/* Do the converting */
-		do_fftw(fftw_state, input_buffer, output_buffer, input_buffer_size, output_buffer_size,0 );
+		do_fftw(fftw_state, input_buffer, output_buffer, input_buffer_size, output_buffer_size, 0);
 
 		/* Write output data */
-		readwrite(output, output_buffer + overlap, sample_size / downsample_factor, 1);
+		cat_write(output, output_buffer + overlap, sample_size / downsample_factor);
 		count ++;
 		if (count > 100) {
 	//		exit(0);
@@ -250,11 +242,11 @@ int main(int argc, char ** argv) {
 	input.cio_stop_on_eof = 1;
 
 	output.cio_fd = 1;
-	output.cio_duplication=input.cio_duplication * downsample;
+	output.cio_duplication = input.cio_duplication * downsample;
 	output.cio_stop_on_eof = 1;
 
 	input.cio_buf_head = malloc(sizeof(int) * 8192 * input.cio_duplication);
-	output.cio_buf_head = malloc(sizeof(int) * 8192 * output.cio_duplication);
+	output.cio_buf_head = malloc(sizeof(int) * 8192 * input.cio_duplication);
 
 	main_loop(&input, &output, downsample, 8192, 0);
 
