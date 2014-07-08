@@ -24,6 +24,8 @@ typedef struct {
 	 * be ready yet.
 	 */
 	int cio_stop_on_eof;
+
+	int * cio_buf_head;
 } catalyzer_io;
 
 typedef struct fftw_holder {
@@ -48,6 +50,29 @@ typedef struct fftw_holder {
 int readwrite(catalyzer_io * cio, int * data, int len, int shouldwrite) {
 
 	int i,j;
+	int bytes_req = len * cio->cio_duplication * sizeof(int);
+	int offset = 0;
+	int rv;
+	
+	if (!shouldwrite) {
+		do {
+			//rv = read(cio->cio_fd, (char*)cio->cio_buf_head + offset, bytes_req);
+			rv = read(cio->cio_fd, (char*)cio->cio_buf_head + offset, bytes_req);
+			fprintf(stderr, "bytes read %i \n", rv);
+			bytes_req = bytes_req - rv;
+			offset = offset + rv;
+			fprintf(stderr, "bytes req: %i. offset %i \n", bytes_req, offset);
+		} while (rv != 0 && bytes_req > 0);
+
+		
+		// discard one channel of data	
+		for (i = 0; i < len; i++) {
+			data[i] = cio->cio_buf_head[i * cio->cio_duplication + cio->cio_duplication - 1];
+			fprintf(stderr, "data %i : %i \n", i, data[i]);
+		}
+
+		return 0;
+	}
 
 	for (i = 0; i < len; i++) {
 		int * dptr;
@@ -59,7 +84,7 @@ int readwrite(catalyzer_io * cio, int * data, int len, int shouldwrite) {
 				if (shouldwrite) {
 					rv = write(cio->cio_fd, dptr, 4);
 				} else {
-					rv = read(cio->cio_fd, dptr, 4);
+					exit(-1);
 				}
 			} while (rv == 0 && !cio->cio_stop_on_eof);
 
@@ -172,6 +197,7 @@ int main_loop(catalyzer_io * input,
 		int sample_size,
 		int overlap) {
 
+	int count = 0;
 	if (sample_size % downsample_factor) {
 		fprintf(stderr,"downsample factor does not evenly divide sample size.\n");
 		return -1;
@@ -204,7 +230,13 @@ int main_loop(catalyzer_io * input,
 
 		/* Write output data */
 		readwrite(output, output_buffer + overlap, sample_size / downsample_factor, 1);
+		count ++;
+		if (count > 100) {
+	//		exit(0);
+		}
 	}
+
+	return 0;
 }
 
 
@@ -213,15 +245,19 @@ int main(int argc, char ** argv) {
 	catalyzer_io input, output;
 	int downsample = 4;
 
-	input.cio_fd=0;
-	input.cio_duplication=2;
-	input.cio_stop_on_eof=1;
+	input.cio_fd = 0;
+	input.cio_duplication = 2;
+	input.cio_stop_on_eof = 1;
 
-	output.cio_fd=1;
+	output.cio_fd = 1;
 	output.cio_duplication=input.cio_duplication * downsample;
-	output.cio_stop_on_eof=1;
+	output.cio_stop_on_eof = 1;
 
+	input.cio_buf_head = malloc(sizeof(int) * 8192 * input.cio_duplication);
+	output.cio_buf_head = malloc(sizeof(int) * 8192 * output.cio_duplication);
 
 	main_loop(&input, &output, downsample, 8192, 0);
+
+	return 0;
 }
 
