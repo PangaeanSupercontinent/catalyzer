@@ -8,6 +8,8 @@
 
 #define MAX_INT 0x7fffffff
 #define FFT_OPTION_HANN 1
+#define DEFAULT_NUMSAMP 8192
+#define DEFAULT_DOWNSAMP 4
 
 typedef struct {
 	/* What file descriptor to use */
@@ -20,6 +22,14 @@ typedef struct {
 
 	int * cio_buf_head;
 } catalyzer_io;
+
+typedef struct {
+	/* number samples */
+	int num_samples;
+
+	/* downsample factor, should be a power of 2 */
+	int downsample;
+} catalyzer_config;
 
 typedef struct fftw_holder {
 	fftw_plan fftplanin;
@@ -213,21 +223,55 @@ int main_loop(catalyzer_io * input,
 	return 0;
 }
 
+catalyzer_config * init_config() {
+
+	catalyzer_config * config = malloc(sizeof(catalyzer_config));
+
+	config->num_samples = DEFAULT_NUMSAMP;
+	config->downsample = DEFAULT_DOWNSAMP;
+
+	return config;
+}
+
+catalyzer_config * handle_user(int argc, char ** argv) {
+
+	int c;
+
+	catalyzer_config * config = init_config();
+	opterr = 0;
+
+	/* TODO: reject bad values, add more configurability */
+	while ((c = getopt (argc, argv, "d:n:")) != -1)
+	switch (c)
+	{
+		case 'd':
+			config->downsample = atoi(optarg);
+			break;
+		case 'n':
+			config->num_samples = atoi(optarg);
+			break;
+		default:
+			abort();
+	}
+
+	return config;
+}
+
 int main(int argc, char ** argv) {
 
+	catalyzer_config * config = handle_user(argc, argv);
 	catalyzer_io input, output;
-	int downsample = 4;
 
 	input.cio_fd = 0;
 	input.cio_duplication = 2;
 
 	output.cio_fd = 1;
-	output.cio_duplication = input.cio_duplication * downsample;
+	output.cio_duplication = input.cio_duplication * config->downsample;
 
-	input.cio_buf_head = malloc(sizeof(int) * 8192 * input.cio_duplication);
-	output.cio_buf_head = malloc(sizeof(int) * 8192 * input.cio_duplication);
+	input.cio_buf_head = malloc(sizeof(int) * config->num_samples * input.cio_duplication);
+	output.cio_buf_head = malloc(sizeof(int) * config->num_samples * input.cio_duplication);
 
-	main_loop(&input, &output, downsample, 8192, 0);
+	main_loop(&input, &output, config->downsample, config->num_samples, 0);
 
 	return 0;
 }
