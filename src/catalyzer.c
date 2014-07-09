@@ -7,8 +7,8 @@
 #include <unistd.h>
 
 #define MAX_INT 0x7fffffff
-
 #define FFT_OPTION_HANN 1
+
 typedef struct {
 	/* What file descriptor to use */
 	int cio_fd;
@@ -98,7 +98,6 @@ catalyzer_fftw_state * prepare_fftw(int inlen, int outlen) {
 
 	return mydata;
 }
-
 
 /*
  * Convert inlen samples from input to outlen samples to output, scaling frequences
@@ -192,9 +191,8 @@ int main_loop(catalyzer_io * input,
 
 	catalyzer_fftw_state * fftw_state = prepare_fftw(input_buffer_size, output_buffer_size);
 
-	int ok = 1;
+	for (;;) {
 
-	while (ok) {
 		/* Copy some data from the tail of the input buffer to the begining, 
 		 * as per overlap requirements 
 		 */
@@ -214,7 +212,6 @@ int main_loop(catalyzer_io * input,
 
 	return 0;
 }
-
 
 int main(int argc, char ** argv) {
 
